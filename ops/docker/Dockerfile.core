@@ -1,0 +1,33 @@
+# STAGE 1: The Builder
+FROM alpine:3.18 AS builder
+RUN apk add --no-cache \
+    build-base \
+    gcc \
+    g++ \
+    make \
+    libpq-dev
+
+WORKDIR /build
+COPY src/core/main.cpp .
+# Use -static-libstdc++ to bake the library into the binary, or we can install it in the next stage.
+# For Alpine, installing the shared lib in the runner is usually cleaner.
+#RUN g++ -O3 main.cpp -o osl-core -lpthread
+RUN g++ -O3 src/core/main.cpp src/core/ledger.cpp -o osl-core -lpthread -lpqxx -lpq
+
+# STAGE 2: The Runner
+FROM alpine:3.18
+
+# FIX: Install libstdc++ and libgcc so the C++ binary can actually run
+RUN apk add --no-cache \
+    libpq \
+    libstdc++ \
+    libgcc
+
+WORKDIR /app
+COPY --from=builder /build/osl-core .
+
+RUN adduser -D osluser
+USER osluser
+
+EXPOSE 8080
+CMD ["./osl-core"]
