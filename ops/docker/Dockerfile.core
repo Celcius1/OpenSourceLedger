@@ -1,30 +1,52 @@
-# STAGE 1: The Builder
-FROM alpine:3.18 AS builder
+# --- STAGE 1: The Builder ---
+FROM alpine:3.21 AS builder
+
+# Install build tools
 RUN apk add --no-cache \
     build-base \
-    gcc \
-    g++ \
-    make \
-    libpq-dev
+    git \
+    cmake \
+    postgresql-dev \
+    openssl-dev \
+    linux-headers \
+    wget 
+
+WORKDIR /tmp
+
+# 1. DOWNLOAD & COMPILE LIBPQXX (Master Branch)
+RUN git clone https://github.com/jtv/libpqxx.git && \
+    cd libpqxx && \
+    mkdir build && cd build && \
+    cmake -DSKIP_BUILD_TEST=ON -DLDOC=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local .. && \
+    make -j$(nproc) && \
+    make install
+
+# 2. DOWNLOAD HTTP LIBRARY (The new step)
+# We pull the single-header web server library directly to the include folder
+RUN wget https://raw.githubusercontent.com/yhirose/cpp-httplib/master/httplib.h -O /usr/local/include/httplib.h
 
 WORKDIR /build
-COPY src/core/main.cpp .
-# Use -static-libstdc++ to bake the library into the binary, or we can install it in the next stage.
-# For Alpine, installing the shared lib in the runner is usually cleaner.
-#RUN g++ -O3 main.cpp -o osl-core -lpthread
-RUN g++ -O3 src/core/main.cpp src/core/ledger.cpp -o osl-core -lpthread -lpqxx -lpq
+COPY src/ /build/src/
 
-# STAGE 2: The Runner
-FROM alpine:3.18
+# 3. COMPILE THE ENGINE
+# Added -DCPPHTTPLIB_RECV_BUFSIZ=16384 to handle large Authelia Cookies/Headers
+RUN g++ -std=c++20 -O3 -DCPPHTTPLIB_RECV_BUFSIZ=16384UL \
+    src/core/main.cpp \
+    src/core/ledger.cpp \
+    src/core/crypto.cpp \
+    -o osl-core \
+    -I/usr/local/include \
+    -L/usr/local/lib \
+    -lpthread -lpqxx -lpq -lcrypto
 
-# FIX: Install libstdc++ and libgcc so the C++ binary can actually run
-RUN apk add --no-cache \
-    libpq \
-    libstdc++ \
-    libgcc
+# --- STAGE 2: The Runner ---
+FROM alpine:3.21
+
+RUN apk add --no-cache libpq libstdc++ libgcc openssl
 
 WORKDIR /app
 COPY --from=builder /build/osl-core .
+COPY --from=builder /usr/local/lib/libpqxx.so* /usr/local/lib/
 
 RUN adduser -D osluser
 USER osluser

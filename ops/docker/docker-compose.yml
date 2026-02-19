@@ -1,6 +1,5 @@
 services:
   # 1. THE VAULT (PostgreSQL Database)
-  # Completely isolated. Only accessible by the Core.
   osl-vault:
     image: postgres:15-alpine
     restart: always
@@ -14,36 +13,43 @@ services:
     networks:
       - internal_trust_net
 
-  # 2. THE INTERNAL ROUTER (Nginx)
-  # Serves the Frontend assets and proxies API calls to the C++ Core.
-  # This container exposes ONE port (9000) to your Host Caddy.
-  osl-web:
-    image: nginx:alpine
-    restart: always
-    ports:
-      # Bind ONLY to localhost so no outside traffic can bypass your main Caddy
-      - "127.0.0.1:9000:80"
+  # 2. THE AUTENTICATOR (Authelia)
+
+  osl-auth:
+    image: authelia/authelia
+    container_name: osl-auth
     volumes:
-      # We will create a simple nginx config next
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      # The Frontend Build (React/Vue/HTML)
-      - ../../src/frontend/dist:/usr/share/nginx/html:ro
+      - ./auth/config:/config
     networks:
       - internal_trust_net
-    depends_on:
-      - osl-core
+    ports:
+      - "9093:9091" # Native Authelia port 9091 mapped to 9093 on host
+    restart: unless-stopped
+    environment:
+      - TZ=Australia/Adelaide
 
   # 3. THE BRAIN (C++ Core Engine)
-  # Placeholder for now.
   osl-core:
-    image: alpine:latest
-    command: tail -f /dev/null
+    build:
+      context: ../../
+      dockerfile: ops/docker/Dockerfile.core
+    restart: always
+    ports:
+      - "127.0.0.1:9000:8080" # Map 9000 (Caddy) to 8080 (App)
+    environment:
+      - OSL_PORT=8080
+      - OSL_AUTH_MODE=HYBRID 
+      - OSL_BACKUP_USER=admin
+      - OSL_BACKUP_PASS=Sovereign2026!
     networks:
       - internal_trust_net
+      - default
+    depends_on:
+      - osl-vault
 
 networks:
   internal_trust_net:
-    internal: true
+    internal: true  # This prevents the database from seeing the outside world
 
 volumes:
   osl_ledger_data:

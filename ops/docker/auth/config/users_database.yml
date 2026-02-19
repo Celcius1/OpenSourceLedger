@@ -1,0 +1,8 @@
+users:
+  fonsi:
+    displayname: "Paul" #
+    password: "$pbkdf2-sha512$310000$mZwwcfvXPg458qV8rWia.A$zS/EPD1sX2GKDxptugFh8QaC7obEw.WwDNTPJAohFgbZxDNRVfxcSUjB.ohoQhw2BRfKk0uXoRjMo95nvKsTZw" # Replace with the actual hash you just generated
+    email: admin@osl.net.au
+    groups:
+      - admins
+      - accountants
