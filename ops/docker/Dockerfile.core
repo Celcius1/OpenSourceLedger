@@ -9,11 +9,12 @@ RUN apk add --no-cache \
     postgresql-dev \
     openssl-dev \
     linux-headers \
-    wget 
+    wget \
+    nlohmann-json # Ensure JSON support is available for the Plugin Interface
 
 WORKDIR /tmp
 
-# 1. DOWNLOAD & COMPILE LIBPQXX (Master Branch)
+# 1. DOWNLOAD & COMPILE LIBPQXX
 RUN git clone https://github.com/jtv/libpqxx.git && \
     cd libpqxx && \
     mkdir build && cd build && \
@@ -21,21 +22,22 @@ RUN git clone https://github.com/jtv/libpqxx.git && \
     make -j$(nproc) && \
     make install
 
-# 2. DOWNLOAD HTTP LIBRARY (The new step)
-# We pull the single-header web server library directly to the include folder
+# 2. DOWNLOAD HTTP LIBRARY
 RUN wget https://raw.githubusercontent.com/yhirose/cpp-httplib/master/httplib.h -O /usr/local/include/httplib.h
 
 WORKDIR /build
+# We copy the entire src tree now to capture the plugins/interface folder
 COPY src/ /build/src/
 
-# 3. COMPILE THE ENGINE
-# Added -DCPPHTTPLIB_RECV_BUFSIZ=16384 to handle large Authelia Cookies/Headers
+# 3. COMPILE THE ENGINE (Updated for Microkernel)
+# We now include PluginManager.cpp in the build command.
 RUN g++ -std=c++20 -O3 -DCPPHTTPLIB_RECV_BUFSIZ=16384UL \
     src/core/main.cpp \
-    src/core/ledger.cpp \
     src/core/crypto.cpp \
+    src/plugins/interface/PluginManager.cpp \
     -o osl-core \
     -I/usr/local/include \
+    -I/build/src/plugins/interface \
     -L/usr/local/lib \
     -lpthread -lpqxx -lpq -lcrypto
 

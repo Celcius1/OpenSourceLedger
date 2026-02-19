@@ -2,28 +2,28 @@ services:
   # 1. THE VAULT (PostgreSQL Database)
   osl-vault:
     image: postgres:15-alpine
+    container_name: osl-vault # Standardised
     restart: always
     environment:
       POSTGRES_USER: osl_admin
-      POSTGRES_PASSWORD: change_me_in_production_please
+      POSTGRES_PASSWORD: Pr@toss2026!
       POSTGRES_DB: osl_main
     volumes:
       - osl_ledger_data:/var/lib/postgresql/data
-      - ../../schema/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ../sql/init_schema.sql:/docker-entrypoint-initdb.d/init.sql:ro # Fixed path
     networks:
-      - internal_trust_net
+      - osl_internal_net
 
-  # 2. THE AUTENTICATOR (Authelia)
-
+  # 2. THE AUTHENTICATOR (Authelia)
   osl-auth:
     image: authelia/authelia
-    container_name: osl-auth
+    container_name: osl-auth # Standardised
     volumes:
       - ./auth/config:/config
     networks:
-      - internal_trust_net
+      - osl_internal_net
     ports:
-      - "9093:9091" # Native Authelia port 9091 mapped to 9093 on host
+      - "0.0.0.0:9094:9091" # Avoids conflict with Gluetun port 9091
     restart: unless-stopped
     environment:
       - TZ=Australia/Adelaide
@@ -33,23 +33,30 @@ services:
     build:
       context: ../../
       dockerfile: ops/docker/Dockerfile.core
+    container_name: osl-core # Standardised
     restart: always
+    volumes:
+      - ../../src/web:/web
     ports:
-      - "127.0.0.1:9000:8080" # Map 9000 (Caddy) to 8080 (App)
+      - "127.0.0.1:9000:8080"
     environment:
       - OSL_PORT=8080
       - OSL_AUTH_MODE=HYBRID 
       - OSL_BACKUP_USER=admin
       - OSL_BACKUP_PASS=Sovereign2026!
+      - OSL_BASE_DOMAIN=osl.net.au
+      - OSL_SESSION_SECRET=3673bead835d6164cdcff9941925f3c3ca674314d711d5453b02d7b3be655002
+      - OSL_DB_CONN=host=osl-vault user=osl_admin password=Pr@toss2026! dbname=osl_main
     networks:
-      - internal_trust_net
+      - osl_internal_net
       - default
     depends_on:
       - osl-vault
 
 networks:
-  internal_trust_net:
-    internal: true  # This prevents the database from seeing the outside world
+  osl_internal_net: # Standardised name
+    name: osl_internal_net
+    #internal: true
 
 volumes:
   osl_ledger_data:

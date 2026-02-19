@@ -1,53 +1,53 @@
-# OSL-Auth Configuration
+# ============================================================================
+# OSL: Sovereign Accounting Suite - Auth Configuration
+# AUTHOR: Cel-Tech-Serv Pty Ltd
+# ============================================================================
 server:
-  address: "tcp://0.0.0.0:9091"
+  address: "tcp4://0.0.0.0:9091"
   buffers:
     read: 16384
     write: 16384
 
-log:
-  level: info
-
-# 1. Authentication Backend (Local File)
 authentication_backend:
+  password_reset:
+    disable: true # Set to false later once SMTP is configured  
   file:
     path: /config/users_database.yml
 
-# 2. Session Management (Fixed missing 'cookies' error)
 session:
   name: osl_session
-  secret: 'jMY8bya5nZOOiJFmsDtGoAuJFyCoiUah3zeXfh2aYnXLobe4M4FnXah7XOWDpVJEc49VLd1J'  # Mandatory
+  secret: 'jMY8bya5nZOOiJFmsDtGoAuJFyCoiUah3zeXfh2aYnXLobe4M4FnXah7XOWDpVJEc49VLd1J'
   expiration: 2h
   inactivity: 30m
-  domain: "osl.net.au"  # Main domain scope
+  # Global 'domain' removed to allow 'cookies' block below
   cookies:
     - domain: "osl.net.au"
       authelia_url: "https://auth.osl.net.au"
-      default_redirection_url: "https://accounts.osl.net.au"
+      default_redirection_url: "https://osl.net.au"
 
-# 3. Storage (Fixed missing 'encryption_key' error)
 storage:
-  encryption_key: 'Im2isde0eP50tGNBuw2Xh6bEuz6sCE2YPWg9N6T7FaqPdLu527V8sYDw5DQhKBQeOhXrrahC' # Mandatory
+  encryption_key: 'Im2isde0eP50tGNBuw2Xh6bEuz6sCE2YPWg9N6T7FaqPdLu527V8sYDw5DQhKBQeOhXrrahC'
   local:
     path: /config/db.sqlite3
 
-# 4. Access Control
 access_control:
   default_policy: deny
   rules:
     - domain: "auth.osl.net.au"
       policy: bypass
+    # 3-Tier Access Control
     - domain: "*.osl.net.au"
       policy: one_factor
-      subject: ["group:accountants"]
+      subject: 
+        - ["group:admins"]      # Paul's Super-User access
+        - ["group:accountants"] # Multi-tenancy management access
+        - ["group:users"]       # Restricted client access
 
-# 5. Notifier (Filesystem for local use)
 notifier:
   disable_startup_check: true
   filesystem:
     filename: /config/notification.txt
 
-# 6. Identity Validation (Fixed missing 'jwt_secret' error)
 identity_validation:
   reset_password:
     jwt_secret: 'bf3YeDi5tChbdLh1AITuyBySfSBW8VFOdzKtMDptqPalDnjyXcmEaihMgtGtHbihrHjNahmg'

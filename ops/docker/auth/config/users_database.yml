@@ -1,8 +1,10 @@
+# ============================================================================
+# OSL: Sovereign Accounting Suite - User Registry
+# ============================================================================
 users:
   fonsi:
-    displayname: "Paul" #
-    password: "$pbkdf2-sha512$310000$mZwwcfvXPg458qV8rWia.A$zS/EPD1sX2GKDxptugFh8QaC7obEw.WwDNTPJAohFgbZxDNRVfxcSUjB.ohoQhw2BRfKk0uXoRjMo95nvKsTZw" # Replace with the actual hash you just generated
+    displayname: "Paul"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$HSxMvM3gcoE/j99IoWR3pQ$Nd9gKc4yPbV0MScXxfqyUU6K61zsUOSuM0ud0Rrt8/k"
     email: admin@osl.net.au
     groups:
-      - admins
-      - accountants
+      - admins # Full tenancy and system control

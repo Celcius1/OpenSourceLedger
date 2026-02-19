@@ -1,0 +1,8 @@
+# Cel-Tech-Serv Security: Never push environment files or binaries
+.env
+osl-core
+*.o
+*.so
+build/
+auth/config/assets/logo.png
+auth/config/assets/favicon.ico

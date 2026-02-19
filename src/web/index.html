@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+    <meta charset="UTF-8">
+    <title>OSL Dashboard | Cel-Tech-Serv</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 p-10 font-mono">
+    
+    <div class="absolute top-5 right-5 flex items-center gap-4">
+        <span class="text-[10px] text-green-500 font-bold border border-green-500 px-2 py-1 uppercase">
+            User: {{USERNAME}}
+        </span>
+        <a href="/logout" class="text-[10px] bg-red-600 hover:bg-red-500 text-white px-3 py-1 rounded font-bold transition uppercase">Secure Exit</a>
+    </div>
+
+    <h1 class="text-3xl font-bold mb-1 text-blue-500">Sovereign Ledger</h1>
+    <p class="text-slate-500 text-xs mb-8 uppercase tracking-tighter">Powered by Cel-Tech-Serv Pty Ltd</p>
+
+    <div class="mb-8 p-4 bg-slate-800 border border-slate-700 rounded">
+        <h2 class="text-sm font-bold text-slate-400 mb-3 uppercase">Active Modules</h2>
+        <div id="plugin-nav" class="flex gap-4">
+            </div>
+    </div>
+    <div class="mb-6 p-4 bg-slate-800 border border-slate-700 rounded shadow-lg">
+    <h2 class="text-xs font-bold text-blue-400 mb-4 uppercase tracking-tighter">Manual Ledger Entry</h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <input type="text" id="desc-input" placeholder="Description" class="p-2 bg-slate-900 border border-slate-600 rounded text-xs text-white outline-none focus:border-blue-500">
+        <div class="flex gap-2">
+            <input type="number" id="debit-input" step="0.01" placeholder="Debit (-)" class="w-1/2 p-2 bg-slate-900 border border-slate-600 rounded text-xs text-white outline-none focus:border-red-500">
+            <input type="number" id="credit-input" step="0.01" placeholder="Credit (+)" class="w-1/2 p-2 bg-slate-900 border border-slate-600 rounded text-xs text-white outline-none focus:border-green-500">
+        </div>
+        <input type="text" id="cat-input" placeholder="Category" class="p-2 bg-slate-900 border border-slate-600 rounded text-xs text-white outline-none focus:border-blue-500">
+        <input type="text" id="subcat-input" placeholder="Sub-Category" class="p-2 bg-slate-900 border border-slate-600 rounded text-xs text-white outline-none focus:border-blue-500">
+    </div>
+    <div class="mt-4 flex justify-end">
+        <button onclick="addTransaction()" class="bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold py-2 px-8 rounded transition uppercase tracking-widest">Commit to Vault</button>
+    </div>
+    </div>
+    <div id="main-content">
+        <p class="text-slate-400 text-sm">Initialising Sovereign Core... fetching ledger data.</p>
+    </div>
+
+<script>
+        async function addTransaction() {
+    // Collect values from the bank-aligned fields
+    const desc = document.getElementById('desc-input').value;
+    const debitVal = document.getElementById('debit-input').value || "0";
+    const creditVal = document.getElementById('credit-input').value || "0";
+    const cat = document.getElementById('cat-input').value || "General";
+    const sub = document.getElementById('subcat-input').value || "Misc";
+
+    if (!desc) return alert("Description is required, Fonsi.");
+
+    // Convert Australian Dollars to Micros for the Core logic
+    const debitMicros = Math.round(parseFloat(debitVal) * 1000000);
+    const creditMicros = Math.round(parseFloat(creditVal) * 1000000);
+
+    const response = await fetch('/api/ledger/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+            description: desc, 
+            debit: debitMicros, 
+            credit: creditMicros,
+            category: cat,
+            subcategory: sub
+        })
+    });
+
+    if (response.ok) {
+        // Clear inputs for the next entry
+        ['desc-input', 'debit-input', 'credit-input', 'cat-input', 'subcat-input'].forEach(id => {
+            document.getElementById(id).value = '';
+        });
+        refreshLedger();
+    } else {
+        alert("Failed to synchronise with Sovereign Vault.");
+    }
+}
+        // Function to fetch and render the Sovereign Ledger data
+    async function refreshLedger() {
+    const content = document.getElementById('main-content');
+    try {
+        const response = await fetch('/api/ledger/data');
+        const data = await response.json();
+
+        let tableHtml = `
+            <table class="w-full text-left text-[10px] border-collapse">
+                <thead>
+                    <tr class="border-b border-slate-700 text-blue-400 uppercase font-bold tracking-tighter">
+                        <th class="py-2">Date</th>
+                        <th class="py-2">Description</th>
+                        <th class="py-2 text-right">Debit (-)</th>
+                        <th class="py-2 text-right">Credit (+)</th>
+                        <th class="py-2 text-right">Balance</th>
+                        <th class="py-2 pl-4">Category</th>
+                        <th class="py-2 text-center">Audit</th>
+                    </tr>
+                </thead>
+                <tbody>`;
+
+// --- Updated Rendering Logic for Cel-Tech-Serv Pty Ltd ---
+data.forEach(row => {
+    const isVoided = row.status === 'voided';
+    
+    // The C++ Core now sends a boolean 'audit_passed'. 
+    // If it's false, someone has likely edited the Postgres database manually.
+    const auditFailed = row.audit_passed === false;
+    
+    // We use conditional CSS classes: 
+    // 1. opacity-25 for voided rows.
+    // 2. bg-red-900/20 (a subtle red tint) for failed audits.
+    tableHtml += `
+        <tr class="border-b border-slate-800 transition ${isVoided ? 'opacity-25 italic' : 'hover:bg-slate-800/50'} ${auditFailed ? 'bg-red-900/20' : ''}">
+            <td class="py-3 text-slate-500 font-mono">
+                ${auditFailed ? '<span title="INTEGRITY ERROR" class="text-red-500 mr-1">⚠️</span>' : ''}
+                ${row.date}
+            </td>
+            <td class="py-3">
+                <div class="font-bold ${auditFailed ? 'text-red-200' : 'text-slate-200'}">${row.description}</div>
+                ${auditFailed ? '<span class="text-[7px] text-red-400 uppercase font-black tracking-widest">Hash Mismatch Detected</span>' : ''}
+            </td>
+            <td class="py-3 text-right text-red-400 font-mono">${row.debit === '$0.00' ? '' : row.debit}</td>
+            <td class="py-3 text-right text-green-400 font-mono">${row.credit === '$0.00' ? '' : row.credit}</td>
+            <td class="py-3 text-right text-slate-300 font-bold font-mono">${row.balance}</td>
+            <td class="py-3 pl-4 text-slate-500">
+                <span class="block">${row.category}</span>
+                <span class="text-[8px] block opacity-40 uppercase">${row.subcategory}</span>
+            </td>
+            <td class="py-3 text-center">
+                ${(!isVoided && !auditFailed) ? `<button onclick="voidEntry(${row.id})" class="text-red-500 hover:text-red-300 font-bold text-[9px] border border-red-900/50 px-2 py-1 rounded">VOID</button>` : '---'}
+            </td>
+        </tr>`;
+});
+
+        tableHtml += `</tbody></table>`;
+        content.innerHTML = tableHtml;
+    } catch (err) {
+        content.innerHTML = `<p class="text-red-500">CRITICAL: Vault sync failure.</p>`;
+    }
+}
+        // Fetch active plugins for the navigation bar
+        fetch('/api/plugins/active')
+            .then(res => res.json())
+            .then(plugins => {
+                const nav = document.getElementById('plugin-nav');
+                nav.innerHTML = '';
+                plugins.forEach(p => {
+                    nav.innerHTML += `
+                        <button onclick="alert('Loading module: ${p.name}')" 
+                                class="bg-slate-700 hover:bg-blue-600 text-white text-[10px] py-1 px-3 rounded transition uppercase font-bold">
+                            ${p.name}
+                        </button>`;
+                });
+            });
+
+        // Run the ledger fetch on initial load
+        refreshLedger();
+    </script>
+</body>
+</html>
