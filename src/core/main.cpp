@@ -4,10 +4,6 @@
  * AUTHOR & COPYRIGHT: Cel-Tech-Serv Pty Ltd
  * MODULE: main.cpp
  * ============================================================================
- * DESCRIPTION:
- * The primary entry point for the OSL Core. Handles Hybrid Auth (SSO/Local) 
- * and acts as the Microkernel Hub via the Plugin Manager.
- * ============================================================================
  */
 
 #include <iostream>
@@ -21,16 +17,11 @@
 #include <nlohmann/json.hpp> 
 #include "crypto.hpp"
 #include "ledger.cpp"
-// --- OSL PLUGIN SYSTEM INJECTION ---
+#include "ViewEngine.hpp"
+#include <map>
 #include "../plugins/interface/PluginManager.hpp" 
 
 using json = nlohmann::json;
-
-// --- CONFIGURATION ---
-const std::string BACKUP_USER = std::getenv("OSL_BACKUP_USER") ? std::getenv("OSL_BACKUP_USER") : "admin";
-const std::string BACKUP_PASS = std::getenv("OSL_BACKUP_PASS") ? std::getenv("OSL_BACKUP_PASS") : "password";
-// Dynamically load the session secret for secure cookie generation
-const std::string SESSION_SECRET = std::getenv("OSL_SESSION_SECRET") ? std::getenv("OSL_SESSION_SECRET") : "change_this_default_secret_immediately";
 
 // Helper: Format Money (Australian English Formatting)
 std::string format_money(long long micros) {
@@ -39,35 +30,37 @@ std::string format_money(long long micros) {
     return "$" + std::to_string(dollars) + "." + (cents < 10 ? "0" : "") + std::to_string(cents);
 }
 
-// Helper: Load decoupled login page and inject error messages
-std::string serve_login_page(std::string error_msg = "") {
-    std::ifstream file("/web/login.html");
-    if (!file.is_open()) return "OSL Core Error: /web/login.html missing. Check volume mounts.";
-    
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    std::string html = buffer.str();
-    
-    // Inject the error message if one exists
-    size_t pos = html.find("{{ERROR_MSG}}");
-    if (pos != std::string::npos) {
-        html.replace(pos, 13, error_msg);
+// FIX: Updated to check the LLDAP 'admins' group passed by Authelia
+// Protects Cel-Tech-Serv Pty Ltd admin routes
+bool is_admin(const httplib::Request &req) {
+    if (req.has_header("Remote-Groups")) {
+        std::string groups = req.get_header_value("Remote-Groups");
+        // Authelia passes groups as a comma-separated list (e.g., "users,admins,tenant_celtech")
+        return groups.find("admins") != std::string::npos;
     }
-    return html;
+    return false;
 }
 
 int main() {
-    const char* env_domain = std::getenv("OSL_BASE_DOMAIN");
-    if (!env_domain) {
-        std::cerr << "[FATAL] OSL_BASE_DOMAIN environment variable missing. Cel-Tech-Serv core halted." << std::endl;
-        return 1; // Refuse to boot without proper configuration
+    // FIX: Moved OSL_DB_CONN extraction to the very top so 'conn_str' is defined 
+    // BEFORE we attempt to establish the pqxx::connection.
+    const char* env_db = std::getenv("OSL_DB_CONN");
+    if (!env_db) {
+        std::cerr << "[FATAL] OSL_DB_CONN environment variable missing. Vault access denied. Core halted." << std::endl;
+        return 1;
     }
-    const std::string BASE_DOMAIN = env_domain;
+    std::string conn_str = env_db;
 
-    // 1. Initialise the Plugin Manager (Cel-Tech-Serv Pty Ltd Hub)
+    // 1. Establish Connection
+    pqxx::connection C(conn_str); 
+
+    // FIX: Safely extract the base domain for logout redirects
+    const char* env_domain = std::getenv("OSL_BASE_DOMAIN");
+    std::string base_domain = env_domain ? env_domain : "osl.net.au";
+
+    // 3. Initialise the Plugin Manager (Cel-Tech-Serv Pty Ltd Hub)
     osl::plugins::PluginManager plugin_manager;
 
-    // 2. Register Sovereign Invoicing Plugin
     osl::plugins::PluginDefinition invoicing_plugin = {
         "au.net.osl.invoicing",
         "Sovereign Invoicing",
@@ -78,20 +71,11 @@ int main() {
     };
     plugin_manager.RegisterPlugin(invoicing_plugin);
 
-    // DB Connection - Dynamically loaded for Cel-Tech-Serv Pty Ltd environments
-    const char* env_db = std::getenv("OSL_DB_CONN");
-    if (!env_db) {
-        std::cerr << "[FATAL] OSL_DB_CONN environment variable missing. Vault access denied. Core halted." << std::endl;
-        return 1;
-    }
-    std::string conn_str = env_db;
-
     // This boots the web server engine for the microkernel
     httplib::Server svr;
     std::cout << "[OSL] Cel-Tech-Serv Hub: Hybrid Auth & Plugin System Active." << std::endl;
 
-   // --- SOVEREIGN LOGGER MIDDLEWARE ---
-    // Log every request to the console for Cel-Tech-Serv auditing
+    // --- SOVEREIGN LOGGER MIDDLEWARE ---
     svr.set_logger([](const httplib::Request &req, const httplib::Response &res) {
         std::cout << "[HUB] " << req.method << " " << req.path 
                   << " -> Status: " << res.status << " (User: " 
@@ -100,63 +84,66 @@ int main() {
     });
 
     // --- GATEKEEPER MIDDLEWARE ---
+    // We now ONLY trust the Reverse Proxy's cryptographically verified header.
     auto is_authenticated = [&](const httplib::Request &req) -> bool {
-        // Primary: Authelia Headers (Forwarded by Caddy)
-        if (req.has_header("Remote-User")) return true;
-
-        // Fallback: Local Cookie
-        if (req.has_header("Cookie")) {
-            std::string cookies = req.get_header_value("Cookie");
-            if (cookies.find("OSL_SESSION=" + SESSION_SECRET) != std::string::npos) return true;
-        }
-        return false;
+        return req.has_header("Remote-User") && !req.get_header_value("Remote-User").empty();
     };
 
     // --- ROUTES ---
 
-    // 1. DASHBOARD (Root Path) - Decoupled Frontend
+    // 1. DASHBOARD (Root Path)
     svr.Get("/", [&](const httplib::Request &req, httplib::Response &res) {
         if (!is_authenticated(req)) {
-            std::cout << "[AUTH] Unauthorized Access Attempt. Redirecting to Login." << std::endl;
-            res.set_redirect("/login");
+            // No more redirecting to a local login page. Drop the connection.
+            res.status = 401;
+            res.set_content("401 Unauthorized - Access via Authelia Gateway Required", "text/plain");
             return;
         }
+        
+        // --- BEGIN COPY: Sovereign UI Assembly ---
+        // 1. Initialise the context map for Cel-Tech-Serv Pty Ltd injection
+        std::map<std::string, std::string> ui_context;
 
-        // Attempt to load the external UI file
-        std::ifstream file("/web/index.html");
-        if (!file.is_open()) {
+        // 2. Set Core Identity & Branding parameters
+        ui_context["BUSINESS_NAME"] = "Cel-Tech-Serv Pty Ltd";
+        
+        // Dynamically extract the verified LLDAP username passed by Authelia
+        // Fallback to 'celcius1' to prevent crashes during local testing
+        std::string user = req.has_header("Remote-User") ? req.get_header_value("Remote-User") : "celcius1";
+        ui_context["USERNAME"] = user; 
+
+        // 3. Set Agnostic UI Hooks (Empty defaults for this test compile)
+        ui_context["SIDEBAR_HOOKS"] = "";
+        ui_context["HEADER_HOOKS"] = "";
+        ui_context["DYNAMIC_HEADERS"] = "<th class='py-3'>Date</th><th class='py-3'>Description</th><th class='py-3 text-right'>Balance</th>";
+        ui_context["DYNAMIC_ROW_DATA"] = "<td class='py-4'>Vault Synchronisation Pending...</td>";
+
+        // 4. Instruct ViewEngine to assemble the final HTML using the internal Docker path
+        std::string final_html = ViewEngine::render_template("/app/core/templates/base.html", ui_context);
+
+        // 5. Handle potential engine failure gracefully
+        if (final_html.find("500 Internal Server Error") != std::string::npos) {
             res.status = 500;
-            res.set_content("OSL Core Error: UI template missing. Cel-Tech-Serv Pty Ltd system halted.", "text/plain");
+            res.set_content("OSL Core Error: ViewEngine failed to assemble the Sovereign UI. Check template paths.", "text/plain");
             return;
         }
 
-        // Read the file into a string
-        std::stringstream buffer;
-        buffer << file.rdbuf();
-        std::string html = buffer.str();
-
-        // Dynamically inject the user's name into the HTML before sending it
-        std::string user = req.has_header("Remote-User") ? req.get_header_value("Remote-User") : "Backup Admin";
-        size_t pos = html.find("{{USERNAME}}");
-        if (pos != std::string::npos) {
-            html.replace(pos, 12, user);
-        }
-
-        res.set_content(html, "text/html");
+        // 6. Serve the assembled dashboard successfully
+        res.status = 200;
+        res.set_content(final_html, "text/html");
+        // --- END COPY: Sovereign UI Assembly ---
     });
 
     // 1b. FULL-CHAIN SOVEREIGN AUDIT API (GET)
     svr.Get("/api/ledger/data", [&](const httplib::Request &req, httplib::Response &res) {
         if (!is_authenticated(req)) return;
-
         try {
             pqxx::connection C(conn_str);
             pqxx::work W(C);
-            // We sort by ID ASC to verify the chain from the beginning
             pqxx::result R = W.exec("SELECT id, to_char(transaction_date, 'DD/MM/YYYY'), description, debit_micros, credit_micros, balance_micros, category, sub_category, status, row_hash FROM ledger ORDER BY id ASC");
 
             json ledger_json = json::array();
-            std::string expected_prev_hash = "GENESIS"; // The start of the Cel-Tech-Serv chain
+            std::string expected_prev_hash = "GENESIS"; 
 
             for (auto row : R) {
                 std::string desc = row[2].as<std::string>();
@@ -167,12 +154,9 @@ int main() {
                 std::string sub = row[7].is_null() ? "" : row[7].as<std::string>();
                 std::string stored_hash = row[9].as<std::string>();
 
-                // RECALCULATE: Now includes the hash of the PREVIOUS row
                 std::string raw_data = desc + std::to_string(debit) + std::to_string(credit) + std::to_string(balance) + cat + sub + expected_prev_hash;
                 std::string recalc_hash = osl::OSLCrypto::generate_sha256(raw_data);
 
-                bool integrity_ok = (recalc_hash == stored_hash);
-                
                 ledger_json.push_back({
                     {"id", row[0].as<int>()},
                     {"date", row[1].as<std::string>()},
@@ -183,31 +167,22 @@ int main() {
                     {"category", cat},
                     {"subcategory", sub},
                     {"status", row[8].as<std::string>()},
-                    {"audit_passed", integrity_ok}
+                    {"audit_passed", (recalc_hash == stored_hash)}
                 });
-
-                // Set the expectation for the NEXT row in the chain
                 expected_prev_hash = stored_hash;
             }
-            
-            // Reverse the list before sending to UI so newest is on top
             std::reverse(ledger_json.begin(), ledger_json.end());
             res.set_content(ledger_json.dump(), "application/json");
         } catch (const std::exception &e) {
-            std::cerr << "[AUDIT FATAL] " << e.what() << std::endl;
             res.status = 500;
         }
     });
 
-    // 1c. BANK-ALIGNED MANUAL ENTRY (POST) - Syntax Correction
+    // 1c. BANK-ALIGNED MANUAL ENTRY (POST)
     svr.Post("/api/ledger/add", [&](const httplib::Request &req, httplib::Response &res) {
         if (!is_authenticated(req)) return;
-
         try {
-            // FIX: Use double colon for the static parse method
             auto j = json::parse(req.body);
-            
-            // Extract values using explicit casting to avoid template ambiguity
             std::string desc = j.at("description").get<std::string>();
             long long debit = j.at("debit").get<long long>();
             long long credit = j.at("credit").get<long long>();
@@ -217,18 +192,14 @@ int main() {
             pqxx::connection C(conn_str);
             pqxx::work W(C);
 
-            // Fetch last balance and last hash to maintain the Sovereign Audit Chain
             pqxx::result last_row = W.exec("SELECT balance_micros, row_hash FROM ledger ORDER BY id DESC LIMIT 1");
             long long prev_balance = last_row.empty() ? 0 : last_row[0][0].as<long long>();
             std::string prev_hash = last_row.empty() ? "GENESIS" : last_row[0][1].as<std::string>();
 
             long long new_balance = prev_balance - debit + credit;
-
-            // Generate the cryptographic link for the audit trail
             std::string raw_data = desc + std::to_string(debit) + std::to_string(credit) + std::to_string(new_balance) + cat + sub + prev_hash;
             std::string current_hash = osl::OSLCrypto::generate_sha256(raw_data);
 
-            // Use modern exec to avoid deprecation warnings
             W.exec("INSERT INTO ledger (description, debit_micros, credit_micros, balance_micros, category, sub_category, row_hash) VALUES (" +
                    W.quote(desc) + ", " + std::to_string(debit) + ", " + std::to_string(credit) + ", " + 
                    std::to_string(new_balance) + ", " + W.quote(cat) + ", " + W.quote(sub) + ", " + W.quote(current_hash) + ")");
@@ -236,95 +207,248 @@ int main() {
             W.commit();
             res.set_content("{\"status\":\"SUCCESS\"}", "application/json");
         } catch (const std::exception &e) {
-            std::cerr << "[AUDIT ERROR] " << e.what() << std::endl;
             res.status = 500;
         }
     });
 
     // 2. PLUGIN GATEWAY (POST)
-    // Used by frontend to route commands to microservices
     svr.Post(R"(/api/plugin/([^/]+)/([^/]+))", [&](const httplib::Request &req, httplib::Response &res) {
         if (!is_authenticated(req)) {
             res.status = 401;
-            res.set_content("{\"status\":\"ERROR\",\"message\":\"Unauthorized\"}", "application/json");
             return;
         }
-
         std::string plugin_id = req.matches[1];
         std::string command = req.matches[2];
         json payload = req.body.empty() ? json::object() : json::parse(req.body);
-
         json result = plugin_manager.ExecutePluginCommand(plugin_id, command, payload);
         res.set_content(result.dump(), "application/json");
     });
 
     // 3. PLUGIN MANIFEST API (GET)
-    // Allows the decoupled frontend to dynamically load active modules
     svr.Get("/api/plugins/active", [&](const httplib::Request &req, httplib::Response &res) {
-        if (!is_authenticated(req)) {
-            res.status = 401;
-            res.set_content("{\"status\":\"ERROR\",\"message\":\"Unauthorized\"}", "application/json");
-            return;
-        }
-
-        // Build a JSON array of active plugins for the Sovereign Hub
-        // (In the future, this will dynamically pull from plugin_manager)
+        if (!is_authenticated(req)) { res.status = 401; return; }
         json plugins = json::array();
         plugins.push_back({
             {"id", "au.net.osl.invoicing"},
             {"name", "Sovereign Invoicing"},
             {"version", "1.0.0"}
         });
-        
         res.set_content(plugins.dump(), "application/json");
     });
 
-    // 4. LOGIN PAGE (GET)
-    svr.Get("/login", [&](const httplib::Request &, httplib::Response &res) {
-        res.set_content(serve_login_page(), "text/html");
-    });
+    // ------------------------------------------------------------------------
+    // OSL: Sovereign Accounting Suite
+    // 4. IDENTITY GATEWAY (POST) - Provisioning Users via Cel-Tech-Serv Pty Ltd
+    // ------------------------------------------------------------------------
+    svr.Post("/api/users/update", [&](const httplib::Request &req, httplib::Response &res) {
+        if (!is_admin(req)) {
+            res.status = 403;
+            res.set_content("{\"error\":\"Forbidden: Sovereign Admin Privileges Required.\"}", "application/json");
+            return;
+        }
 
-    // 5. LOGIN ACTION (POST)
-    svr.Post("/login", [&](const httplib::Request &req, httplib::Response &res) {
-        if (req.has_param("user") && req.has_param("pass")) {
-            if (req.get_param_value("user") == BACKUP_USER && req.get_param_value("pass") == BACKUP_PASS) {
-                res.set_header("Set-Cookie", "OSL_SESSION=" + SESSION_SECRET + "; HttpOnly; Path=/; Max-Age=3600");
-                res.set_redirect("/");
-            } else {
-                res.set_content(serve_login_page("Invalid Credentials"), "text/html");
+        try {
+            auto j = json::parse(req.body);
+            std::string target_user = j.at("username").get<std::string>();
+            std::string new_email = j.at("email").get<std::string>();
+            std::string new_display = j.at("displayName").get<std::string>();
+            std::string new_first = j.at("firstName").get<std::string>();
+            std::string new_last = j.at("lastName").get<std::string>();
+            
+            // Check if a new password was typed
+            std::string new_pass = "";
+            if (j.contains("password") && !j.at("password").get<std::string>().empty()) {
+                new_pass = j.at("password").get<std::string>();
             }
-        } else {
-            res.set_content(serve_login_page("Missing Fields"), "text/html");
+
+            std::string admin_user = std::getenv("LLDAP_ADMIN_USER") ? std::getenv("LLDAP_ADMIN_USER") : "admin";
+            std::string admin_pass = std::getenv("LLDAP_ADMIN_PASS") ? std::getenv("LLDAP_ADMIN_PASS") : "";
+            httplib::Client lldap("http://osl-identity:17170");
+
+            // Authenticate Core
+            json auth_payload = {{"username", admin_user}, {"password", admin_pass}};
+            auto auth_res = lldap.Post("/auth/simple/login", auth_payload.dump(), "application/json");
+            if (!auth_res || auth_res->status != 200) {
+                res.status = 500;
+                res.set_content("{\"error\":\"Core failed to auth with Vault.\"}", "application/json");
+                return;
+            }
+
+            std::string token = json::parse(auth_res->body)["token"];
+            httplib::Headers headers = {{"Authorization", "Bearer " + token}};
+
+	    // 1. Send Update Mutation for Text Fields (Corrected Schema Return Type for Cel-Tech-Serv Pty Ltd)
+            json update_payload = {
+                {"query", "mutation UpdateUser($user: UpdateUserInput!) { updateUser(user: $user) { ok } }"},
+                {"variables", {
+                    {"user", {
+                        {"id", target_user},
+                        {"email", new_email},
+                        {"displayName", new_display},
+                        {"firstName", new_first},
+                        {"lastName", new_last}
+                    }}
+                }}
+            };
+            
+            auto update_res = lldap.Post("/api/graphql", headers, update_payload.dump(), "application/json");
+            
+            // SENIOR TECH DIAGNOSTIC: Catch sneaky GraphQL errors
+            if (update_res) {
+                auto reply = json::parse(update_res->body);
+                if (reply.contains("errors")) {
+                    std::string err_msg = reply["errors"][0]["message"].get<std::string>();
+                    res.status = 400;
+                    res.set_content("{\"error\":\"Vault Error: " + err_msg + "\"}", "application/json");
+                    return;
+                }
+            }
+
+	    // ---------------------------------------------------------
+            // SOVEREIGN ROLE ASSIGNMENT LOGIC (Cel-Tech-Serv Pty Ltd)
+            // ---------------------------------------------------------
+            // 1. Extract the requested role ID from the frontend JSON payload
+            int role_id = 6; // Fail-safe default: Standard User (Group 6)
+            if (j.contains("roleId") && !j.at("roleId").get<std::string>().empty()) {
+                role_id = std::stoi(j.at("roleId").get<std::string>());
+            }
+
+            // 2. Construct the LLDAP GraphQL mutation to assign the group
+            // Note: LLDAP strictly requires groupId to be an Int, not a String!
+            json group_payload = {
+                {"query", "mutation AddUserToGroup($userId: String!, $groupId: Int!) { addUserToGroup(userId: $userId, groupId: $groupId) { ok } }"},
+                {"variables", {
+                    {"userId", target_user},
+                    {"groupId", role_id}
+                }}
+            };
+            
+            // 3. Transmit the role assignment to the Identity Vault
+            auto group_res = lldap.Post("/api/graphql", headers, group_payload.dump(), "application/json");
+            
+            // 4. Senior Tech Diagnostic: Catch any schema or assignment errors
+            if (group_res) {
+                auto group_reply = json::parse(group_res->body);
+                if (group_reply.contains("errors")) {
+                    std::string err_msg = group_reply["errors"][0]["message"].get<std::string>();
+                    res.status = 400;
+                    res.set_content("{\"error\":\"Role Assignment Failed: " + err_msg + "\"}", "application/json");
+                    return; // Halt and report the failure before sending the 200 OK
+                }
+            }
+            // ---------------------------------------------------------
+
+            // 2. Conditional Password Update
+            if (!new_pass.empty()) {
+                json pass_payload = {
+                    {"query", "mutation { updatePassword(userId: \"" + target_user + "\", password: \"" + new_pass + "\") { ok } }"}
+                };
+                auto pass_res = lldap.Post("/api/graphql", headers, pass_payload.dump(), "application/json");
+                if (pass_res) {
+                    auto reply = json::parse(pass_res->body);
+                    if (reply.contains("errors")) {
+                        std::string err_msg = reply["errors"][0]["message"].get<std::string>();
+                        res.status = 400;
+                        res.set_content("{\"error\":\"Password Update Failed: " + err_msg + "\"}", "application/json");
+                        return;
+                    }
+                }
+            }
+
+            res.status = 200;
+            res.set_content("{\"status\":\"SUCCESS\", \"message\":\"Identity Updated Successfully\"}", "application/json");
+
+        } catch (const std::exception &e) {
+            res.status = 500;
+            res.set_content("{\"error\":\"Payload parsing error in Core.\"}", "application/json");
         }
     });
 
-    // 6. LOGOUT ACTION (Clears Local & Redirects SSO)
-    // Part of the OSL: Sovereign Accounting Suite security stack
-    // Authored by Cel-Tech-Serv Pty Ltd
+    // ------------------------------------------------------------------------
+    // 5. IDENTITY GATEWAY (GET) - List Active Sovereign Identities
+    // ------------------------------------------------------------------------
+    svr.Get("/api/auth/me", [&](const httplib::Request &req, httplib::Response &res) {
+        // Extract the secure headers injected by the Authelia/Caddy proxy
+        std::string current_user = req.get_header_value("Remote-User");
+        std::string current_groups = req.get_header_value("Remote-Groups");
+        
+        // If testing directly without Authelia, provide safe fallbacks
+        if (current_user.empty()) current_user = "unknown";
+        if (current_groups.empty()) current_groups = "none";
+
+        json response = {
+            {"user", current_user},
+            {"groups", current_groups}
+        };
+        
+        res.status = 200;
+        res.set_content(response.dump(), "application/json");
+    });
+
+    svr.Get("/api/users/list", [&](const httplib::Request &req, httplib::Response &res) {
+        // Enforce strict access: Only Admins can view the identity list
+        if (!is_admin(req)) {
+            res.status = 403;
+            res.set_content("{\"error\":\"Forbidden: Sovereign Admin Privileges Required.\"}", "application/json");
+            return;
+        }
+
+        try {
+            // Retrieve secure credentials from the Docker environment
+            std::string admin_user = std::getenv("LLDAP_ADMIN_USER") ? std::getenv("LLDAP_ADMIN_USER") : "admin";
+            std::string admin_pass = std::getenv("LLDAP_ADMIN_PASS") ? std::getenv("LLDAP_ADMIN_PASS") : "";
+
+            // Internal HTTP client talking directly to the LLDAP container
+            httplib::Client lldap("http://osl-identity:17170");
+
+            // Authenticate the Core
+            json auth_payload = {{"username", admin_user}, {"password", admin_pass}};
+            auto auth_res = lldap.Post("/auth/simple/login", auth_payload.dump(), "application/json");
+
+            if (!auth_res || auth_res->status != 200) {
+                res.status = 500;
+                res.set_content("{\"error\":\"Core failed to authenticate with the Identity Vault.\"}", "application/json");
+                return;
+            }
+
+            // Extract token and set headers
+            std::string token = json::parse(auth_res->body)["token"];
+            httplib::Headers headers = {{"Authorization", "Bearer " + token}};
+
+	    // Updated GraphQL Query to include group membership for 'User Type'
+            json query_payload = {
+                {"query", "query { users { id email displayName firstName lastName groups { id displayName } } }"}
+            };
+            
+            auto query_res = lldap.Post("/api/graphql", headers, query_payload.dump(), "application/json");
+
+            // Pass the LLDAP JSON response directly back to the Javascript UI
+            res.status = 200;
+            res.set_content(query_res->body, "application/json");
+
+        } catch (const std::exception &e) {
+            res.status = 500;
+            res.set_content("{\"error\":\"Failed to fetch identities from the Vault.\"}", "application/json");
+        }
+    });
+
+    // 6. SOVEREIGN LOGOUT ACTION
     svr.Get("/logout", [&](const httplib::Request &req, httplib::Response &res) {
-        // Clear the local OSL_SESSION cookie for Cel-Tech-Serv local access
-        res.set_header("Set-Cookie", "OSL_SESSION=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0");
-
-        // Construct dynamic domains based on the environment variable
-        // This ensures the core remains completely domain-agnostic
-        std::string target_url = "https://" + BASE_DOMAIN;
-        std::string encoded_target = "https%3A%2F%2F" + BASE_DOMAIN;
-        std::string auth_logout_url = "https://auth." + BASE_DOMAIN + "/logout?rd=" + encoded_target;
-
-        // If we detect an Authelia session, redirect to the SSO logout page
-        if (req.has_header("Remote-User")) {
-            // URL-Encoded target routes the user out of Authelia and onto the base domain
-            res.set_redirect(auth_logout_url);
-        } else {
-            // Standard redirection for backup/local mode directly to the base domain
-            res.set_redirect(target_url);
-        }
-        std::cout << "[AUTH] User logged out of OSL Core. Bouncing to " << BASE_DOMAIN << "." << std::endl;
+        // Uses the base_domain variable defined at the top of main()
+        std::string target_url = "https://" + base_domain;
+        std::string encoded_target = "https%3A%2F%2F" + base_domain;
+        
+        // Redirect straight to Authelia's secure session destruction endpoint
+        std::string auth_logout_url = "https://auth." + base_domain + "/logout?rd=" + encoded_target;
+        res.set_redirect(auth_logout_url);
     });
 
-    // Start Server on internal port dynamically provided by Docker
+    // --- STATIC ASSET MOUNTS ---
+    // Expose the agnostic CSS and JS files to the browser
+    svr.set_mount_point("/js", "/app/www/js");
+    svr.set_mount_point("/css", "/app/www/css");
+
     int listen_port = std::getenv("OSL_PORT") ? std::stoi(std::getenv("OSL_PORT")) : 8080;
-    std::cout << "[OSL] Cel-Tech-Serv Hub engaging on port " << listen_port << "..." << std::endl;
     svr.listen("0.0.0.0", listen_port);
     
     return 0;
