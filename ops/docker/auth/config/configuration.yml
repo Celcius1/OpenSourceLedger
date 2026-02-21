@@ -10,9 +10,23 @@ server:
 
 authentication_backend:
   password_reset:
-    disable: true # Set to false later once SMTP is configured  
-  file:
-    path: /config/users_database.yml
+    disable: true
+  ldap:
+    implementation: custom
+    address: ldap://osl-identity:3890 # LLDAP default internal port
+    timeout: 5s
+    start_tls: false
+    user: uid=admin,ou=people,dc=osl,dc=net,dc=au
+    password: Pr@toss2026!
+    base_dn: dc=osl,dc=net,dc=au
+    additional_users_dn: ou=people
+    users_filter: "(&({username_attribute}={input})(objectClass=person))"
+    additional_groups_dn: ou=groups
+    groups_filter: "(member={dn})"
+    attributes:
+      display_name: displayName
+      username: uid
+      mail: mail
 
 session:
   name: osl_session
@@ -20,10 +34,12 @@ session:
   expiration: 2h
   inactivity: 30m
   # Global 'domain' removed to allow 'cookies' block below
+  #domain: "osl.net.au"
   cookies:
     - domain: "osl.net.au"
       authelia_url: "https://auth.osl.net.au"
-      default_redirection_url: "https://osl.net.au"
+      default_redirection_url: "https://accounts.osl.net.au"
+      remember_me: 1M
 
 storage:
   encryption_key: 'Im2isde0eP50tGNBuw2Xh6bEuz6sCE2YPWg9N6T7FaqPdLu527V8sYDw5DQhKBQeOhXrrahC'
@@ -39,6 +55,7 @@ access_control:
     - domain: "*.osl.net.au"
       policy: one_factor
       subject: 
+        - ["user:admin"]          # FIX: Explicitly allow the default LLDAP master account
         - ["group:admins"]      # Paul's Super-User access
         - ["group:accountants"] # Multi-tenancy management access
         - ["group:users"]       # Restricted client access

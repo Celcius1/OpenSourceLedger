@@ -7,23 +7,28 @@
 #define OSL_CRYPTO_HPP
 
 #include <string>
-#include "osl_plugin.hpp" // Now part of the OSL namespace
+#include "osl_plugin.hpp"
 
-namespace osl { // Aligning with the Sovereign SDK namespace
+namespace osl {
 
 class OSLCrypto {
 public:
-    /**
-     * generate_sha256
-     * Uses OpenSSL EVP API for compatibility with OpenSSL 3.0+
-     */
+    // Ledger Hashing (Existing)
     static std::string generate_sha256(const std::string str);
+    static std::string calculate_entry_hash(const std::string& prev_hash, const LedgerLine& line);
+
+    // Identity & Security (NEW - Required for User Management)
+    /**
+     * generate_random_string
+     * Creates a secure alphanumeric string for one-time bootstrap passwords.
+     */
+    static std::string generate_random_string(int length);
 
     /**
-     * calculate_entry_hash
-     * Bonds the previous hash to the current LedgerLine.
+     * hash_password
+     * Salts and hashes user passwords before they reach the Vault.
      */
-    static std::string calculate_entry_hash(const std::string& prev_hash, const LedgerLine& line);
+    static std::string hash_password(const std::string& password);
 };
 
 } // namespace osl

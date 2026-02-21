@@ -15,11 +15,12 @@ find_package(Threads REQUIRED)
 
 # 2. Define Core Source Files
 # ---------------------------
-# Note: 'ledger.cpp' is currently #included in main.cpp, so it is not listed 
+# Note: 'ledger.cpp' is currently #included in main.cpp, so it is not listed
 # here as a separate compilation unit to avoid duplicate symbol errors.
 set(CORE_SOURCES
     main.cpp
     crypto.cpp
+    ViewEngine.cpp
     ../plugins/interface/PluginManager.cpp
 )
 

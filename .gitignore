@@ -6,3 +6,5 @@ osl-core
 build/
 auth/config/assets/logo.png
 auth/config/assets/favicon.ico
+ops/docker/auth/config/db.sqlite3
+core/

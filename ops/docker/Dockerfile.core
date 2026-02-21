@@ -33,6 +33,7 @@ COPY src/ /build/src/
 # We now include PluginManager.cpp in the build command.
 RUN g++ -std=c++20 -O3 -DCPPHTTPLIB_RECV_BUFSIZ=16384UL \
     src/core/main.cpp \
+    src/core/ViewEngine.cpp \
     src/core/crypto.cpp \
     src/plugins/interface/PluginManager.cpp \
     -o osl-core \

@@ -1,0 +1,25 @@
+/* Sovereign Core Interface */
+body {
+    background-color: #0f172a; /* Slate-900 */
+    color: #f1f7feb3;
+    font-family: 'Courier New', Courier, monospace;
+}
+
+/* Sidebar Styling */
+.osl-sidebar {
+    width: 260px;
+    background-color: #1e293b; /* Slate-800 */
+    border-right: 1px solid #334155;
+}
+
+/* Extension Point Highlighting */
+.plugin-injected {
+    color: #eab308; /* Yellow-500 (Used for GST or other plugin data) */
+    opacity: 0.8;
+}
+
+/* Audit Breach Styling */
+.audit-failed {
+    background-color: rgba(127, 29, 29, 0.2);
+    border-left: 4px solid #ef4444;
+}

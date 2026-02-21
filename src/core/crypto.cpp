@@ -2,6 +2,7 @@
 #include <openssl/evp.h> // Modern OpenSSL API
 #include <iomanip>
 #include <sstream>
+#include <random>
 
 namespace osl {
 
@@ -31,6 +32,22 @@ std::string OSLCrypto::calculate_entry_hash(const std::string& prev_hash, const 
          << line.description;
              
     return generate_sha256(data.str());
+}
+
+std::string osl::OSLCrypto::generate_random_string(int length) {
+    const std::string charset = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    std::random_device rd;
+    std::mt19937 generator(rd());
+    std::uniform_int_distribution<> dist(0, charset.size() - 1);
+    
+    std::string str;
+    for (int i = 0; i < length; ++i) str += charset[dist(generator)];
+    return str;
+}
+
+std::string osl::OSLCrypto::hash_password(const std::string& password) {
+    // Salting with your business name to prevent rainbow table attacks
+    return generate_sha256(password + "CEL-TECH-SERV-SALT"); 
 }
 
 } // namespace osl

@@ -23,35 +23,80 @@ services:
     networks:
       - osl_internal_net
     ports:
-      - "0.0.0.0:9094:9091" # Avoids conflict with Gluetun port 9091
+      - "127.0.0.1:9094:9091" # Avoids conflict with Gluetun port 9091
     restart: unless-stopped
     environment:
       - TZ=Australia/Adelaide
 
-  # 3. THE BRAIN (C++ Core Engine)
+ #2a. THE IDENTIFIER (LLDAP)
+  osl-identity:
+    image: lldap/lldap:latest
+    container_name: osl-identity
+    restart: always
+    environment:
+      - LLDAP_LDAP_BASE_DN=dc=osl,dc=net,dc=au
+      - LLDAP_LDAP_USER_PASS=Pr@toss2026!
+      - LLDAP_DATABASE_URL=postgres://osl_admin:Pr@toss2026!@osl-vault:5432/osl_identity
+      # FIX: Added required JWT Secret and Key Seed
+      - LLDAP_JWT_SECRET=y#FUp2e*Wcnp%O=anYB_+FL{{u):4PeN
+      - LLDAP_KEY_SEED=osl_sovereign_identity_seed_2026
+    networks:
+      - osl_internal_net
+    # FIX: Shifted the host port to 17180 to avoid the detcom collision
+    ports:
+      - "17180:17170"
+    volumes:
+      - ./auth/lldap:/data
+
+# 3. THE BRAIN (C++ Core Engine)
   osl-core:
     build:
       context: ../../
       dockerfile: ops/docker/Dockerfile.core
-    container_name: osl-core # Standardised
+    container_name: osl-core
     restart: always
     volumes:
-      - ../../src/web:/web
-    ports:
-      - "127.0.0.1:9000:8080"
+      # Direct absolute mount for the templates
+      - /opt/docker/OSL/core/templates:/app/core/templates:ro
+      
+      # Direct absolute mount for the config
+      - /opt/docker/OSL/core/config:/app/core/config:ro
+      
+      # Assets mount (mapping the new css/js folders)
+      - /opt/docker/OSL/src/web:/app/www:ro
     environment:
       - OSL_PORT=8080
-      - OSL_AUTH_MODE=HYBRID 
-      - OSL_BACKUP_USER=admin
-      - OSL_BACKUP_PASS=Sovereign2026!
       - OSL_BASE_DOMAIN=osl.net.au
-      - OSL_SESSION_SECRET=3673bead835d6164cdcff9941925f3c3ca674314d711d5453b02d7b3be655002
       - OSL_DB_CONN=host=osl-vault user=osl_admin password=Pr@toss2026! dbname=osl_main
+      
+      # Core API link to LLDAP (Using native internal ports for the Docker network)
+      - OSL_LDAP_URI=ldap://osl-identity:3890
+      - LLDAP_GRAPHQL_URL=http://osl-identity:17170/query
+      
+      # Identity Provisioning Credentials for Cel-Tech-Serv Pty Ltd
+      - LLDAP_ADMIN_USER=admin
+      - LLDAP_ADMIN_PASS=Pr@toss2026!
     networks:
       - osl_internal_net
       - default
     depends_on:
       - osl-vault
+
+  # 4. THE GATEWAY (Nginx Reverse Proxy)
+  osl-proxy:
+    image: nginx:alpine
+    container_name: osl-proxy
+    restart: always
+    volumes:
+      #- ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./:/etc/nginx/conf.d/:ro
+    networks:
+      - osl_internal_net
+    ports:
+      - "127.0.0.1:9000:80" # This is the port your Cloudflare Tunnel should now hit
+    depends_on:
+      - osl-core
+      - osl-auth
 
 networks:
   osl_internal_net: # Standardised name
