@@ -10,7 +10,8 @@ RUN apk add --no-cache \
     openssl-dev \
     linux-headers \
     wget \
-    nlohmann-json # Ensure JSON support is available for the Plugin Interface
+    nlohmann-json \
+    openldap-clients # Added for LDAP compilation checks
 
 WORKDIR /tmp
 
@@ -30,7 +31,6 @@ WORKDIR /build
 COPY src/ /build/src/
 
 # 3. COMPILE THE ENGINE (Updated for Microkernel)
-# We now include PluginManager.cpp in the build command.
 RUN g++ -std=c++20 -O3 -DCPPHTTPLIB_RECV_BUFSIZ=16384UL \
     src/core/main.cpp \
     src/core/ViewEngine.cpp \
@@ -45,7 +45,8 @@ RUN g++ -std=c++20 -O3 -DCPPHTTPLIB_RECV_BUFSIZ=16384UL \
 # --- STAGE 2: The Runner ---
 FROM alpine:3.21
 
-RUN apk add --no-cache libpq libstdc++ libgcc openssl
+# ADDED openldap-clients HERE so the C++ engine can execute ldappasswd at runtime
+RUN apk add --no-cache libpq libstdc++ libgcc openssl openldap-clients
 
 WORKDIR /app
 COPY --from=builder /build/osl-core .

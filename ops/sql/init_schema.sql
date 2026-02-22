@@ -1,20 +1,22 @@
 -- OSL: Sovereign Schema Initialization
 -- Purpose: Creates the immutable ledger structure
 
-CREATE SCHEMA IF NOT EXISTS osl_registry;
+DROP TABLE IF EXISTS ledger CASCADE;
 
-CREATE TABLE IF NOT EXISTS osl_registry.ledger_entries (
+CREATE TABLE ledger (
     id SERIAL PRIMARY KEY,
-    transaction_uuid UUID DEFAULT gen_random_uuid(),
-    account_code VARCHAR(10) NOT NULL,
-    debit BIGINT NOT NULL DEFAULT 0,  -- Stored in Micros (1000000 = $1.00)
-    credit BIGINT NOT NULL DEFAULT 0, -- Stored in Micros
+    transaction_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     description TEXT NOT NULL,
-    curr_hash CHAR(64) NOT NULL,      -- The SHA-256 Seal of this record
-    prev_hash CHAR(64),               -- The Link to the previous record
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    debit_micros BIGINT NOT NULL DEFAULT 0,
+    credit_micros BIGINT NOT NULL DEFAULT 0,
+    balance_micros BIGINT NOT NULL DEFAULT 0,
+    category VARCHAR(100),
+    sub_category VARCHAR(100),
+    division_id VARCHAR(50) DEFAULT 'global',
+    status VARCHAR(20) DEFAULT 'ACTIVE',
+    row_hash CHAR(64) NOT NULL
 );
 
--- Index for rapid audit lookups
-CREATE INDEX IF NOT EXISTS idx_ledger_hash ON osl_registry.ledger_entries(curr_hash);
-CREATE INDEX IF NOT EXISTS idx_ledger_account ON osl_registry.ledger_entries(account_code);
+-- Indexes for rapid audit lookups
+CREATE INDEX idx_ledger_hash ON ledger(row_hash);
+CREATE INDEX idx_ledger_division ON ledger(division_id);

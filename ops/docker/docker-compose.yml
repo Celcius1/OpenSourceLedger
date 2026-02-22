@@ -60,7 +60,7 @@ services:
       - /opt/docker/OSL/core/templates:/app/core/templates:ro
       
       # Direct absolute mount for the config
-      - /opt/docker/OSL/core/config:/app/core/config:ro
+      - /opt/docker/OSL/core/config:/app/core/config:rw
       
       # Assets mount (mapping the new css/js folders)
       - /opt/docker/OSL/src/web:/app/www:ro
