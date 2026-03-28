@@ -1,0 +1,3 @@
+[submodule "src/plugins/official/osl-plugin-tax-au"]
+	path = src/plugins/official/osl-plugin-tax-au
+	url = git@github.com:celcius1/osl-plugin-tax-au.git
