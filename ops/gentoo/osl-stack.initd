@@ -1,0 +1,32 @@
+#!/sbin/openrc-run
+# Copyright (c) 2026 Cel-Tech-Serv Pty Ltd
+# OSL: Sovereign Accounting Suite Service Script
+
+description="OSL Sovereign Accounting Stack"
+extra_started_commands="reload"
+
+# Path to your project root where docker-compose.yml lives
+OSL_DIR="/opt/docker/OSL/ops/docker"
+
+depend() {
+    need net docker
+    after logger
+}
+
+start() {
+    ebegin "Starting OSL Sovereign Accounting Suite"
+    cd "${OSL_DIR}" && docker-compose up -d
+    eend $?
+}
+
+stop() {
+    ebegin "Stopping OSL Sovereign Accounting Suite"
+    cd "${OSL_DIR}" && docker-compose down
+    eend $?
+}
+
+reload() {
+    ebegin "Reloading OSL Stack"
+    cd "${OSL_DIR}" && docker-compose restart
+    eend $?
+}

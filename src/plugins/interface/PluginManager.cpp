@@ -89,17 +89,24 @@ json PluginManager::ExecutePluginCommand(const std::string& plugin_id,
         };
     }
 
-    // 3. Construct the network request payload
+    // --- NEW: 3a. HYBRID ROUTING (NATIVE BINARY) ---
+    // If the plugin was loaded into RAM via dlopen, execute it instantly.
+    if (it->second.native_instance != nullptr) {
+        return it->second.native_instance->execute(command, payload);
+    }
+
+    // --- 3b. HYBRID ROUTING (EXTERNAL HTTP) ---
+    // If there is no native instance, fall back to the Docker Bridge network
     json request_body = {
         {"command", command},
         {"payload", payload},
         {"source", "OSL_CORE_AUTH"} // Tagged so the plugin knows it came from the Hub
     };
 
-    // 4. Construct the full URL (Endpoint + specific execute path defined in our SDK)
+    // Construct the full URL (Endpoint + specific execute path defined in our SDK)
     std::string target_url = it->second.endpoint_url + "/api/execute";
 
-    // 5. Send the request across the Docker bridge network
+    // Send the request across the Docker bridge network
     return SendHttpRequest(target_url, request_body);
 }
 

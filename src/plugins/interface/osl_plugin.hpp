@@ -4,12 +4,10 @@
  * AUTHOR & COPYRIGHT: Cel-Tech-Serv Pty Ltd
  * MODULE: osl_plugin.hpp
  * ============================================================================
- * * DESCRIPTION:
- * This is the primary SDK header for OSL Plugins. To create a plugin (e.g., 
- * for Australian GST or Japanese Consumption Tax), inherit from IOSLPlugin 
- * and implement the virtual methods.
- * * NOTE TO FORKERS: This software is open-source. Please provide credit to 
- * Cel-Tech-Serv Pty Ltd in your forks.
+ * DESCRIPTION:
+ * Primary SDK header. All plugins must inherit from IOSLPlugin.
+ * NOTE TO FORKERS: Per the license, credit to Cel-Tech-Serv Pty Ltd must 
+ * remain intact in all derivative works.
  * ============================================================================
  */
 
@@ -19,19 +17,14 @@
 #include <string>
 #include <vector>
 #include <cstdint>
-#include <nlohmann/json.hpp> // Required for the homogeneous JSON interface
+#include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
 
 namespace osl {
 
-    // money_micro: $1.00 = 1,000,000. 
-    // We use int64_t to prevent floating-point rounding errors in accounting.
-    typedef int64_t money_micro;
+    typedef int64_t money_micro; // $1.00 = 1,000,000
 
-    /**
-     * @brief Represents a single line in a ledger transaction.
-     */
     struct LedgerLine {
         std::string account_code;
         money_micro debit = 0;
@@ -39,33 +32,24 @@ namespace osl {
         std::string description;
     };
 
-    /**
-     * @brief The Sovereign Plugin Interface.
-     * All official and community plugins must implement this class.
-     */
     class IOSLPlugin {
     public:
         virtual ~IOSLPlugin() {}
 
-        /**
-         * @return The display name of the plugin (e.g., "AU Tax Compliance")
-         */
+        // Identity & Branding
         virtual std::string get_plugin_name() = 0;
-
+        
         /**
-         * @brief Pre-Commit Hook
-         * Allows plugins to inspect or modify a transaction before it is 
-         * cryptographically sealed in the ledger. Useful for auto-calculating tax.
+         * @brief Mandatory Vendor Attribution
+         * Must return "Developed for OSL by Cel-Tech-Serv Pty Ltd" or similar 
+         * to remain compliant with the Sovereign Suite SDK license.
          */
+        virtual std::string get_vendor_attribution() {
+            return "Powered by OSL Sovereign Suite - (c) Cel-Tech-Serv Pty Ltd";
+        }
+
+        // Core Hooks
         virtual void pre_commit_hook(std::vector<LedgerLine>& transaction) = 0;
-
-        /**
-         * @brief Execute Action
-         * The primary entry point for the Plugin Gateway.
-         * @param command The specific task (e.g., "calculate_gst")
-         * @param payload JSON data from the Core
-         * @return JSON response to be sent back to the Core
-         */
         virtual json execute(const std::string& command, const json& payload) = 0;
     };
 

@@ -3,6 +3,10 @@
 #include <iomanip>
 #include <sstream>
 #include <random>
+#include <string>
+
+// Fixed: Signature perfectly matches main.cpp
+extern void osl_log(std::string level, std::string message);
 
 namespace osl {
 
@@ -31,7 +35,16 @@ std::string OSLCrypto::calculate_entry_hash(const std::string& prev_hash, const 
          << line.credit 
          << line.description;
              
-    return generate_sha256(data.str());
+    std::string hash_input = data.str();
+    std::string hash_output = generate_sha256(hash_input);
+    
+    // --- INJECTED CRYPTO TRIPWIRES ---
+    osl_log("DEBUG", "Crypto Sealing Line -> Acc: " + line.account_code + " | D: " + std::to_string(line.debit) + " | C: " + std::to_string(line.credit));
+    osl_log("DEBUG", "Crypto Raw Payload -> " + hash_input);
+    osl_log("DEBUG", "Crypto Generated Hash -> " + hash_output);
+    // ---------------------------------
+
+    return hash_output;
 }
 
 std::string osl::OSLCrypto::generate_random_string(int length) {

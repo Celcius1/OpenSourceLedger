@@ -26,6 +26,7 @@
 #include <vector>
 #include <memory>
 #include <nlohmann/json.hpp> // Standard JSON library we use
+#include "osl_plugin.hpp"    // <-- NEW: Native C++ Plugin Interface
 
 using json = nlohmann::json;
 
@@ -45,6 +46,7 @@ namespace plugins {
         std::string version;        // SemVer string
         std::vector<std::string> capabilities; // List of ledger actions this plugin can request
         bool is_active;             // Soft-disable switch
+        osl::IOSLPlugin* native_instance = nullptr; // <-- NEW: Holds native .so binaries directly in RAM
     };
 
     /**

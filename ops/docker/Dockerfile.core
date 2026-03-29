@@ -1,7 +1,12 @@
+# ============================================================================
+# SOFTWARE: OSL: Sovereign Accounting Suite
+# AUTHOR & COPYRIGHT: Cel-Tech-Serv Pty Ltd
+# MODULE: OSL Core Engine (Microkernel)
+# ============================================================================
+
 # --- STAGE 1: The Builder ---
 FROM alpine:3.21 AS builder
 
-# Install build tools
 RUN apk add --no-cache \
     build-base \
     git \
@@ -11,7 +16,7 @@ RUN apk add --no-cache \
     linux-headers \
     wget \
     nlohmann-json \
-    openldap-clients # Added for LDAP compilation checks
+    openldap-clients
 
 WORKDIR /tmp
 
@@ -19,7 +24,12 @@ WORKDIR /tmp
 RUN git clone https://github.com/jtv/libpqxx.git && \
     cd libpqxx && \
     mkdir build && cd build && \
-    cmake -DSKIP_BUILD_TEST=ON -DLDOC=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local .. && \
+    cmake -DSKIP_BUILD_TEST=ON \
+          -DLDOC=OFF \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_SHARED_LIBS=ON \
+          -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+          -DCMAKE_INSTALL_PREFIX=/usr/local .. && \
     make -j$(nproc) && \
     make install
 
@@ -27,10 +37,9 @@ RUN git clone https://github.com/jtv/libpqxx.git && \
 RUN wget https://raw.githubusercontent.com/yhirose/cpp-httplib/master/httplib.h -O /usr/local/include/httplib.h
 
 WORKDIR /build
-# We copy the entire src tree now to capture the plugins/interface folder
 COPY src/ /build/src/
 
-# 3. COMPILE THE ENGINE (Updated for Microkernel)
+# 3. COMPILE THE ENGINE
 RUN g++ -std=c++20 -O3 -DCPPHTTPLIB_RECV_BUFSIZ=16384UL \
     src/core/main.cpp \
     src/core/ViewEngine.cpp \
@@ -45,15 +54,19 @@ RUN g++ -std=c++20 -O3 -DCPPHTTPLIB_RECV_BUFSIZ=16384UL \
 # --- STAGE 2: The Runner ---
 FROM alpine:3.21
 
-# ADDED openldap-clients HERE so the C++ engine can execute ldappasswd at runtime
-RUN apk add --no-cache libpq libstdc++ libgcc openssl openldap-clients
+# ADDED: curl and jq for plugin-based infrastructure management
+RUN apk add --no-cache libpq libstdc++ libgcc openssl openldap-clients curl jq
 
 WORKDIR /app
 COPY --from=builder /build/osl-core .
-COPY --from=builder /usr/local/lib/libpqxx.so* /usr/local/lib/
+COPY --from=builder /usr/local/lib/libpqxx-8.0.so /usr/local/lib/
+COPY --from=builder /usr/local/lib/libpqxx.so /usr/local/lib/
 
-RUN adduser -D osluser
+RUN adduser -D osluser && \
+    chown -R osluser:osluser /app
+
 USER osluser
-
 EXPOSE 8080
+ENV LD_LIBRARY_PATH=/usr/local/lib
+
 CMD ["./osl-core"]
